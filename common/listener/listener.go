@@ -4,6 +4,7 @@ import (
 	"context"
 	"net"
 	"net/netip"
+	"os"
 	"runtime"
 	"strings"
 	"sync/atomic"
@@ -78,7 +79,13 @@ func New(
 }
 
 func (l *Listener) Start() error {
-	if common.Contains(l.network, N.NetworkTCP) {
+	if l.listenOptions.ListenPath != "" {
+		_, err := l.ListenUnix()
+		if err != nil {
+			return err
+		}
+		go l.loopTCPIn()
+	} else if common.Contains(l.network, N.NetworkTCP) {
 		_, err := l.ListenTCP()
 		if err != nil {
 			return err
@@ -100,11 +107,15 @@ func (l *Listener) Start() error {
 	if l.setSystemProxy {
 		listenPort := M.SocksaddrFromNet(l.tcpListener.Addr()).Port
 		var listenAddrString string
-		listenAddr := l.listenOptions.Listen.Build(netip.IPv4Unspecified())
-		if listenAddr.IsUnspecified() {
+		if l.listenOptions.ListenPath != "" {
 			listenAddrString = "127.0.0.1"
 		} else {
-			listenAddrString = listenAddr.String()
+			listenAddr := l.listenOptions.Listen.Build(netip.IPv4Unspecified())
+			if listenAddr.IsUnspecified() {
+				listenAddrString = "127.0.0.1"
+			} else {
+				listenAddrString = listenAddr.String()
+			}
 		}
 		systemProxy, err := settings.NewSystemProxy(l.ctx, M.ParseSocksaddrHostPort(listenAddrString, listenPort), l.systemProxySOCKS)
 		if err != nil {
@@ -125,7 +136,11 @@ func (l *Listener) Close() error {
 	if l.systemProxy != nil && l.systemProxy.IsEnabled() {
 		err = l.systemProxy.Disable()
 	}
-	return E.Errors(err, common.Close(
+	var errClose error
+	if l.listenOptions.ListenPath != "" {
+		errClose = os.Remove(l.listenOptions.ListenPath)
+	}
+	return E.Errors(err, errClose, common.Close(
 		l.tcpListener,
 		common.PtrOrNil(l.udpConn),
 	))
