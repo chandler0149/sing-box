@@ -46,9 +46,14 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 	if err != nil {
 		return nil, err
 	}
-	outboundDialer, err := dialer.New(ctx, options.DialerOptions, options.ServerIsDomain())
-	if err != nil {
-		return nil, err
+	var outboundDialer N.Dialer
+	if options.ServerPath != "" {
+		outboundDialer = &unixDialer{path: options.ServerPath}
+	} else {
+		outboundDialer, err = dialer.New(ctx, options.DialerOptions, options.ServerIsDomain())
+		if err != nil {
+			return nil, err
+		}
 	}
 	outbound := &Outbound{
 		Adapter:   outbound.NewAdapterWithDialerOptions(C.TypeSOCKS, tag, options.Network.Build(), options.DialerOptions),
@@ -115,3 +120,20 @@ func (h *Outbound) ListenPacket(ctx context.Context, destination M.Socksaddr) (n
 	h.logger.InfoContext(ctx, "outbound packet connection to ", destination)
 	return h.client.ListenPacket(ctx, destination)
 }
+
+// unixDialer implements N.Dialer over a UNIX domain socket.
+// The socks.Client calls DialContext with NetworkTCP and the server address,
+// but this dialer ignores the destination and connects to the unix socket path instead.
+type unixDialer struct {
+	path string
+}
+
+func (d *unixDialer) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
+	var nd net.Dialer
+	return nd.DialContext(ctx, "unix", d.path)
+}
+
+func (d *unixDialer) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
+	return nil, E.New("unix dialer does not support packet connections")
+}
+
